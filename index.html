@@ -1,0 +1,236 @@
+<html>
+    <head>
+        <title>Binary Woho</title>
+        <script type="text/javascript" src="jquery-3.2.1.min.js"></script>
+        <script type="text/javascript" src="dist/jquery-confirm.min.js"></script>
+        <script type="text/javascript" src="notify.min.js"></script>
+        <link rel="stylesheet" href="dist/jquery-confirm.min.css"/>
+    </head>
+    <body>
+        <div style="margin: 20px auto; width: 200px;">
+            <div id="saldo-txt">
+                Saldo Anda : <span class="saldo"></span>
+            </div>
+            <div class="beton">
+                <select id="beton" name="beton">
+                    <option value="R_100">Volatility 100</option>
+                    <option value="R_10">Volatility 10</option>
+                    <option value="R_25">Volatility 25</option>
+                    <option value="R_50">Volatility 50</option>
+                    <option value="R_75">Volatility 75</option>
+                </select>
+                <br />Duration: <input id="duration" name="duration" value="5" style="width: 20px" />
+                Unit: <input id="duration_unit" name="duration_unit" value="t" style="width: 20px" />
+            </div>
+            <br />
+            Jumlah Bet <span class="jumlahbet"></span>
+            <br />
+            <br />
+            <div class="arahmarket">
+                <button id="buttonup" buyid="" price="" onclick="BetUp(); return false;" style="width: 200px; height:40px;">UP </button>
+                <br />
+                <br />
+                <button id="buttondown" buyid="" price="" onclick="BetDown(); return false;" style="width: 200px; height:40px;">Down </button>
+            </div>
+            <div style="display: none;">
+                <br />
+                <textarea class="labaloop" style="width: 100%; height: 50px;"></textarea>
+                <br />
+                <br />
+                <textarea class="perform" style="width: 100%; height: 50px;"></textarea>
+            </div>
+            <br />
+            <div id="profit_table"></div>
+        </div>
+    </body>
+    <script type="text/javascript">
+        var Beton, Duration, Duration_unit;
+        var Cek_Profit = false;
+        var token = "Q83fCx8rLEme26Y";
+        var BUYID = "";
+        var BUYPrice = "";
+        var transactionID = "";
+        var RealBalance = "";
+        var BalanceCount = "";
+        var ws_login = new WebSocket('wss://ws.binaryws.com/websockets/v3?app_id=1089');
+        var tick_start = false;
+        var timespotbet = "";
+        var setlockprice = "";
+        var total_los = 0;
+        var donotif = false;
+        ws_login.onopen = function (evt) {
+            ws_login.send(JSON.stringify({authorize: token}));
+        };
+        ws_login.onmessage = function (msg) {
+            var data = JSON.parse(msg.data);
+            // console.log(data);
+            if (data.authorize) {
+                RealBalance = data.authorize.balance;
+                if (total_los < 1) {
+                    BalanceCount = RealBalance;
+                }
+                $(".saldo").html(data.authorize.balance);
+            }
+            if (data.balance) {
+                RealBalance = data.balance.balance;
+                if (total_los < 1) {
+                    BalanceCount = RealBalance;
+                }
+                $(".saldo").html(data.balance.balance);
+            }
+            if (data.profit_table) {
+                init_data = "";
+                for (cp in data.profit_table.transactions) {
+                    if (data.profit_table.transactions[cp].transaction_id == transactionID) {
+                        $("#buttondown").show();
+                        $("#buttonup").show();
+                        if (data.profit_table.transactions[cp].sell_price == "0.00") {
+                            // piye ?
+                            total_los++;
+                            if (donotif) {
+                                $.notify("--- Los " + total_los + " ---", "warn");
+                                donotif = false;
+                            }
+                        } else {
+                            total_los = 0;
+                            if (donotif) {
+                                $.notify("+++ Win +++", "success");
+                                donotif = false;
+                            }
+                        }
+                        transactionID = false;
+                    }
+                    if (data.profit_table.transactions[cp].sell_price == "0.00") {
+                        init_data += "Los:<font color=red>" + data.profit_table.transactions[cp].buy_price + "</font><br />";
+                    } else {
+                        init_data += "Win:<font color=blue>" +
+                                (data.profit_table.transactions[cp].sell_price - data.profit_table.transactions[cp].buy_price)
+                                + "</font><br />";
+                    }
+                }
+                $("#profit_table").html(init_data);
+            }
+            if (data.proposal) {
+                // console.log(data.proposal);
+                if (data.echo_req.contract_type == "CALL") {
+                    $("#buttonup").html("ATAS " + data.proposal.ask_price)
+                            .attr("buyid", data.proposal.id)
+                            .attr("price", data.proposal.ask_price)
+                            ;
+                }
+                if (data.echo_req.contract_type == "PUT") {
+                    $("#buttondown").html("BAWAH " + data.proposal.ask_price)
+                            .attr("buyid", data.proposal.id)
+                            .attr("price", data.proposal.ask_price)
+                            ;
+                }
+            }
+            if (data.buy) {
+                console.log(data);
+                transactionID = data.buy.transaction_id;
+                timespotbet = data.buy.start_time;
+            }
+            if (data.error) {
+                $("#buttondown").show();
+                $("#buttonup").show();
+                console.log(data);
+            }
+            if (data.tick) {
+                tick_start = true;
+                $.notify(data.tick.quote, "info");
+                // console.log(data.tick.quote);
+            }
+            // $(".saldo").html(data.authorize.balance);
+        };
+        function BetUp() {
+            BUYID = $("#buttonup").attr("buyid");
+            BUYPrice = $("#buttonup").attr("price");
+            BetNow("CALL");
+        }
+        function BetDown() {
+            BUYID = $("#buttondown").attr("buyid");
+            BUYPrice = $("#buttondown").attr("price");
+            BetNow("PUT");
+        }
+        function BetNow(type) {
+            $("#buttondown").hide();
+            $("#buttonup").hide();
+            donotif = true;
+            ws_login.send(JSON.stringify({
+                buy: 1,
+                price: GetBetAmount(),
+                parameters: {
+                    symbol: Beton,
+                    duration: Duration,
+                    duration_unit: Duration_unit,
+                    amount: GetBetAmount(),
+                    contract_type: type,
+                    currency: "USD",
+                    basis: "stake"
+                }
+            }));
+        }
+        function cekprofit() {
+            setTimeout(function () {
+                if (!tick_start) {
+                    ws_login.send(JSON.stringify({ticks: Beton}));
+                }
+                ws_login.send(JSON.stringify({profit_table: 1, limit: 10}));
+                cekprofit();
+            }, 2000);
+        }
+        function ceksaldo() {
+            setTimeout(function () {
+                ws_login.send(JSON.stringify({balance: 1}));
+                ceksaldo();
+            }, 2000);
+        }
+        function CekOp(type) {
+            setTimeout(function () {
+                Beton = $("#beton").val();
+                Duration = $("#duration").val();
+                Duration_unit = $("#duration_unit").val();
+                ws_login.send(JSON.stringify({
+                    proposal: 1,
+                    symbol: Beton,
+                    duration: Duration,
+                    duration_unit: Duration_unit,
+                    amount: GetBetAmount(),
+                    contract_type: type,
+                    currency: "USD",
+                    basis: "stake"
+                })
+                        );
+                CekOp(type)
+            }, 2000);
+        }
+        function GetBetAmount() {
+            // total Los is available
+            // BalanceCount is available
+            array_marti = [0.35, 0.5, 1.056, 2.228, 4.708
+                        //, 9.93
+            ];
+            total_marti = 0.35 + 0.5 + 1.056 + 2.228 + 4.708
+                    // + 9.93
+                    ;
+            if (BalanceCount > total_marti) {
+                gap_martil = BalanceCount / total_marti;
+                if (total_los < 5) {
+                    return gap_martil * array_marti[total_los];
+                } else {
+                    return gap_martil * array_marti[0];
+                }
+            } else {
+                if (total_los < 5) {
+                    return array_marti[total_los];
+                } else {
+                    return array_marti[0];
+                }
+            }
+        }
+        cekprofit();
+        ceksaldo();
+        CekOp("CALL");
+        CekOp("PUT");
+    </script>
+</html>
